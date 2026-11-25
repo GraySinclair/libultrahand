@@ -222,6 +222,9 @@ inline std::atomic<bool> launchComboHasTriggered{false};
 #endif
 // Incremented on every Capture toggle, so the overlay can react (e.g. delete the screenshot the system saved).
 inline std::atomic<u32> captureToggleCount{0};
+// Incremented on every Capture event (press or release, short or long), so the overlay can also react to holds,
+// e.g. delete the video the system saves for one.
+inline std::atomic<u32> captureEventCount{0};
 #endif
 
 // Opt-in (set by the host overlay, e.g. Status Monitor): when true, pressing the
@@ -15510,6 +15513,7 @@ namespace tsl {
                         #if CAPTURE_OPENS_MENU
                         {
                             eventClear(&captureButtonPressEvent);
+                            captureEventCount.fetch_add(1, std::memory_order_acq_rel);
                             const u64 tick = armGetSystemTick();
                             const u64 gapNs = armTicksToNs(tick - captureLastEventTick);
                             captureLastEventTick = tick;
