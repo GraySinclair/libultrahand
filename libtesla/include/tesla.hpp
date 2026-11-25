@@ -204,6 +204,26 @@ inline std::string s_lastFocusedItemText; // tracks the text of whatever focusab
 inline std::atomic<bool> mainComboHasTriggered{false};
 inline std::atomic<bool> launchComboHasTriggered{false};
 
+// CAPTURE_OPENS_MENU (opt-in, define it to 1 in the overlay's Makefile): a short press of the Capture button
+// shows or hides the overlay, like the launch combo. Capture isn't a HidNpadButton, so it can't be part of a
+// key combo; the background event poller watches hidsys's Capture event instead.
+#ifndef CAPTURE_OPENS_MENU
+#define CAPTURE_OPENS_MENU 0
+#endif
+#if CAPTURE_OPENS_MENU
+// The Capture event fires on press and on release. A release 50-500 ms after the press is a short press (the
+// one the system takes a screenshot on); a longer hold (video) is ignored, as is the ghost event at boot.
+// Thresholds from J-D-K/PNGShot. Override in the Makefile if needed.
+#ifndef CAPTURE_SHORT_PRESS_MIN_NS
+#define CAPTURE_SHORT_PRESS_MIN_NS 50'000'000ULL
+#endif
+#ifndef CAPTURE_SHORT_PRESS_MAX_NS
+#define CAPTURE_SHORT_PRESS_MAX_NS 500'000'000ULL
+#endif
+// Incremented on every Capture toggle, so the overlay can react (e.g. delete the screenshot the system saved).
+inline std::atomic<u32> captureToggleCount{0};
+#endif
+
 // Opt-in (set by the host overlay, e.g. Status Monitor): when true, pressing the
 // mode-combo of the mode you are CURRENTLY in returns to that overlay's OWN main
 // menu (relaunching itself with --lastSelectedItem <label>) instead of returning to
@@ -14589,6 +14609,11 @@ namespace tsl {
             u64 minusHoldStartTick = 0;
             bool minusHoldArmed = false;
 
+        #if CAPTURE_OPENS_MENU
+            u64 captureLastEventTick = 0;   // tick of the last Capture event (press or release)
+            bool captureHeld = false;       // a press was seen and its release hasn't come yet
+        #endif
+
 
             while (shData->running.load(std::memory_order_acquire)) {
 
@@ -15482,6 +15507,32 @@ namespace tsl {
 
 
                         case WaiterObject_CaptureButton:
+                        #if CAPTURE_OPENS_MENU
+                        {
+                            eventClear(&captureButtonPressEvent);
+                            const u64 tick = armGetSystemTick();
+                            const u64 gapNs = armTicksToNs(tick - captureLastEventTick);
+                            captureLastEventTick = tick;
+                            if (gapNs >= CAPTURE_SHORT_PRESS_MAX_NS) {
+                                captureHeld = true;    // a press (long after the last event)
+                            } else if (captureHeld && gapNs >= CAPTURE_SHORT_PRESS_MIN_NS) {
+                                captureHeld = false;   // the release of a short press: toggle, as the launch combo does
+                                if (shData->overlayOpen) {
+                                    if (!disableHiding) {
+                                        tsl::Overlay::get()->hide();
+                                        shData->overlayOpen = false;
+                                    }
+                                } else {
+                                    eventFire(&shData->comboEvent);
+                                    mainComboHasTriggered.store(true, std::memory_order_release);
+                                }
+                                captureToggleCount.fetch_add(1, std::memory_order_acq_rel);
+                            } else {
+                                captureHeld = false;   // too quick, or the release of a long hold
+                            }
+                            break;
+                        }
+                        #else
                             if (screenshotsAreDisabled) {
                                 eventClear(&captureButtonPressEvent);
                                 break;
@@ -15514,8 +15565,9 @@ namespace tsl {
                                 delayUpdate = false;
                             }
                             #endif
-        
+
                             break;
+                        #endif  // CAPTURE_OPENS_MENU
                     }
                 } else if (rc != KERNELRESULT(TimedOut)) {
                     ASSERT_FATAL(rc);
