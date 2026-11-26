@@ -227,6 +227,11 @@ inline std::atomic<u32> captureToggleCount{0};
 inline std::atomic<u32> captureEventCount{0};
 #endif
 
+// MENU_BUTTONS (opt-in, define it in the overlay's Makefile to a HidNpadButton mask, e.g. HidNpadButton_AnySL):
+// pressing any of these buttons on its own shows or hides the overlay, like the launch combo, which keeps
+// working too. Meant for a button the system remaps Capture to (System Settings > Change Button Mapping), so
+// Capture opens the overlay without the system taking a screenshot.
+
 // Opt-in (set by the host overlay, e.g. Status Monitor): when true, pressing the
 // mode-combo of the mode you are CURRENTLY in returns to that overlay's OWN main
 // menu (relaunching itself with --lastSelectedItem <label>) instead of returning to
@@ -15121,6 +15126,21 @@ namespace tsl {
                             mainComboHasTriggered.store(true, std::memory_order_release);
                         }
                     }
+                #ifdef MENU_BUTTONS
+                    // A menu button pressed on its own (nothing else held): toggle, as the launch combo does.
+                    else if ((shData->keysDown & static_cast<u64>(MENU_BUTTONS)) &&
+                             !(shData->keysHeld & ~static_cast<u64>(MENU_BUTTONS) & ALL_KEYS_MASK)) {
+                        if (shData->overlayOpen) {
+                            if (!disableHiding) {
+                                tsl::Overlay::get()->hide();
+                                shData->overlayOpen = false;
+                            }
+                        } else {
+                            eventFire(&shData->comboEvent);
+                            mainComboHasTriggered.store(true, std::memory_order_release);
+                        }
+                    }
+                #endif
                 #if IS_LAUNCHER_DIRECTIVE
                     else if (ult::updateMenuCombos && (((shData->keysHeld & tsl::cfg::launchCombo2) == tsl::cfg::launchCombo2) && shData->keysDown & tsl::cfg::launchCombo2)) {
                         std::swap(tsl::cfg::launchCombo, tsl::cfg::launchCombo2); // Swap the two launch combos
